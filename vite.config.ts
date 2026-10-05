@@ -8,7 +8,7 @@ const siteConfiguration = (() => {
   const siteConfigPath = path.resolve(import.meta.dirname, '.figma/make/site.json')
 
   try {
-    const fileContents = fs.readFileSync(siteConfigPath, 'utf-8')
+    const fileContents = fs.readFileSync(siteConfigPath, 'utf-8').replace(/^\uFEFF/, '')
     return fileContents ? JSON.parse(fileContents) : {}
   } catch {
     return {}

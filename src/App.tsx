@@ -73,7 +73,7 @@ const categories = [
   { name: "Lifestyle", value: 184, percent: 22, color: "gold" },
 ];
 
-const API_BASE = "http://localhost:3001/api";
+const API_BASE = "http://127.0.0.1:3001/api";
 const USER_STORAGE_KEY = "hearthy-user";
 
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -233,20 +233,22 @@ function AuthPage({
   loading,
   error,
 }: {
-  mode: "login" | "signup";
-  setMode: (mode: "login" | "signup") => void;
-  onSubmit: (payload: { name?: string; email: string; password: string }) => Promise<void> | void;
+  mode: "login" | "signup" | "admin";
+  setMode: (mode: "login" | "signup" | "admin") => void;
+  onSubmit: (payload: { name?: string; email: string; username?: string; password: string }) => Promise<void> | void;
   loading: boolean;
   error?: string;
 }) {
   const isSignup = mode === "signup";
+  const isAdmin = mode === "admin";
   const [name, setName] = useState("Alex Morgan");
   const [email, setEmail] = useState("alex@example.com");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("password123");
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await onSubmit({ name: isSignup ? name : undefined, email, password });
+    await onSubmit({ name: isSignup ? name : undefined, email, username: isAdmin ? username : undefined, password });
   }
 
   return (
@@ -282,34 +284,129 @@ function AuthPage({
             <strong>hearthy</strong>
           </div>
           <div className="auth-heading" key={`heading-${mode}`}>
-            <p className="eyebrow">{isSignup ? "Start your journey" : "Welcome back"}</p>
-            <h2>{isSignup ? "Create your account" : "Sign in to Hearthy"}</h2>
-            <p>{isSignup ? "Build better money habits, one day at a time." : "Your financial home is right where you left it."}</p>
+            <p className="eyebrow">{isAdmin ? "Administrator" : isSignup ? "Start your journey" : "Welcome back"}</p>
+            <h2>{isAdmin ? "Admin sign in" : isSignup ? "Create your account" : "Sign in to Hearthy"}</h2>
+            <p>{isAdmin ? "Sign in to review system activity and spending." : isSignup ? "Build better money habits, one day at a time." : "Your financial home is right where you left it."}</p>
           </div>
 
-          <div className="auth-tabs" role="tablist" aria-label="Account access">
+          {!isAdmin && <div className="auth-tabs" role="tablist" aria-label="Account access">
             <button type="button" role="tab" aria-selected={!isSignup} className={!isSignup ? "active" : ""} onClick={() => setMode("login")}>Log in</button>
             <button type="button" role="tab" aria-selected={isSignup} className={isSignup ? "active" : ""} onClick={() => setMode("signup")}>Sign up</button>
-          </div>
+          </div>}
 
           <form key={`form-${mode}`} className="auth-form" onSubmit={handleSubmit}>
-            {isSignup && (
+            {isAdmin ? (
+              <label>
+                Admin username
+                <input required autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} />
+              </label>
+            ) : isSignup && (
               <label>
                 Full name
                 <input required autoComplete="name" placeholder="Alex Morgan" value={name} onChange={(event) => setName(event.target.value)} />
               </label>
             )}
-            <label>
+            {!isAdmin && <label>
               Email address
               <input required type="email" autoComplete="email" placeholder="alex@example.com" value={email} onChange={(event) => setEmail(event.target.value)} />
-            </label>
+            </label>}
             <label>
-              <span className="label-row">Password {!isSignup && <b>Forgot?</b>}</span>
+              <span className="label-row">Password</span>
               <input required type="password" autoComplete={isSignup ? "new-password" : "current-password"} placeholder="••••••••" value={password} onChange={(event) => setPassword(event.target.value)} />
             </label>
             {error && <div className="auth-error">{error}</div>}
-            <button className="primary-button auth-submit" type="submit" disabled={loading}>{loading ? "Please wait..." : isSignup ? "Create account" : "Log in"}</button>
+            <button className="primary-button auth-submit" type="submit" disabled={loading}>{loading ? "Please wait..." : isAdmin ? "Sign in as admin" : isSignup ? "Create account" : "Log in"}</button>
           </form>
+          {!isAdmin ? <button className="auth-admin-link" type="button" onClick={() => setMode("admin")}>Administrator sign in</button> : <button className="auth-admin-link" type="button" onClick={() => setMode("login")}>Back to user sign in</button>}
+        </div>
+      </section>
+    </main>
+  );
+}
+
+type AdminOverview = {
+  totalUsers: number;
+  totalTrackers: number;
+  totalExpenses: number;
+  amountByCurrency: Record<string, number>;
+  users: Array<{
+    id: string;
+    name: string;
+    email: string;
+    createdAt: string;
+    trackers: Array<{
+      id: string;
+      name: string;
+      currency: string;
+      budget: number;
+      expenseCount: number;
+      totalExpense: number;
+    }>;
+  }>;
+  recentExpenses: Array<{
+    id: string;
+    name: string;
+    amount: number;
+    currency: string;
+    category: string;
+    date: string;
+  }>;
+};
+
+function AdminDashboard({ data, onSignOut }: { data: AdminOverview; onSignOut: () => void }) {
+  return (
+    <main className="admin-page">
+      <header className="admin-header">
+        <div>
+          <p className="eyebrow">Hearthy system administration</p>
+          <h1>System overview</h1>
+          <p>Account, tracker, and expense activity across the system.</p>
+        </div>
+        <button type="button" className="admin-signout" onClick={onSignOut}>Sign out</button>
+      </header>
+
+      <section className="admin-metrics" aria-label="System totals">
+        <article><span>Registered users</span><strong>{data.totalUsers}</strong></article>
+        <article><span>Trackers</span><strong>{data.totalTrackers}</strong></article>
+        <article><span>Recorded expenses</span><strong>{data.totalExpenses}</strong></article>
+        <article><span>Tracked amounts</span><strong>{Object.entries(data.amountByCurrency).length ? Object.entries(data.amountByCurrency).map(([currency, amount]) => `${formatMoney(amount, currency)} ${currency}`).join(" · ") : "No expenses"}</strong></article>
+      </section>
+
+      <section className="panel admin-table-panel">
+        <div className="panel-head"><div><h2>User activity</h2><p>Expense totals remain grouped by each tracker’s currency.</p></div></div>
+        <div className="admin-table-scroll">
+          <table className="admin-table">
+            <thead><tr><th>User</th><th>Email</th><th>Trackers</th><th>Expenses</th><th>Registered</th></tr></thead>
+            <tbody>
+              {data.users.map((entry) => {
+                const expenseCount = entry.trackers.reduce((sum, tracker) => sum + tracker.expenseCount, 0);
+                const trackerTotals = entry.trackers.map((tracker) => `${formatMoney(tracker.totalExpense, tracker.currency)} (${tracker.name})`);
+                return <tr key={entry.id}>
+                  <td>{entry.name}</td>
+                  <td>{entry.email}</td>
+                  <td>{entry.trackers.length}</td>
+                  <td>{expenseCount}{trackerTotals.length > 0 && <small>{trackerTotals.join(" · ")}</small>}</td>
+                  <td>{new Date(entry.createdAt).toLocaleDateString()}</td>
+                </tr>;
+              })}
+              {data.users.length === 0 && <tr><td colSpan={5}>No users have signed up yet.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="panel admin-table-panel">
+        <div className="panel-head"><div><h2>Latest expenses</h2><p>Most recently recorded system activity.</p></div></div>
+        <div className="admin-table-scroll">
+          <table className="admin-table">
+            <thead><tr><th>Expense</th><th>Category</th><th>Amount</th><th>Date</th></tr></thead>
+            <tbody>
+              {data.recentExpenses.map((expense) => <tr key={expense.id}>
+                <td>{expense.name}</td><td>{expense.category}</td><td>{formatMoney(expense.amount, expense.currency)}</td><td>{new Date(expense.date).toLocaleString()}</td>
+              </tr>)}
+              {data.recentExpenses.length === 0 && <tr><td colSpan={4}>No expenses have been recorded yet.</td></tr>}
+            </tbody>
+          </table>
         </div>
       </section>
     </main>
@@ -407,8 +504,23 @@ export default function App() {
   const [period, setPeriod] = useState<"This week" | "This month" | "This year">("This month");
   const [showModal, setShowModal] = useState(false);
   const [modalMode, setModalMode] = useState<"budget" | "expense">("expense");
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    try {
+      return Boolean(localStorage.getItem(USER_STORAGE_KEY));
+    } catch {
+      return false;
+    }
+  });
+  const [authMode, setAuthMode] = useState<"login" | "signup" | "admin">("login");
+  const [adminToken, setAdminToken] = useState(() => {
+    try {
+      return sessionStorage.getItem("hearthy-admin-token");
+    } catch {
+      return null;
+    }
+  });
+  const [adminOverview, setAdminOverview] = useState<AdminOverview | null>(null);
+  const [adminLoadError, setAdminLoadError] = useState("");
   const [showSetup, setShowSetup] = useState(false);
   const [user, setUser] = useState<User | null>(() => {
     try {
@@ -418,10 +530,20 @@ export default function App() {
       return null;
     }
   });
+  const [loadingAccount, setLoadingAccount] = useState(() => {
+    try {
+      return Boolean(localStorage.getItem(USER_STORAGE_KEY));
+    } catch {
+      return false;
+    }
+  });
   const [budget, setBudget] = useState(11579);
   const [userTransactions, setUserTransactions] = useState<ExpenseTransaction[]>(demoTransactions);
   const [isDemoAccount, setIsDemoAccount] = useState(true);
   const [budgetInput, setBudgetInput] = useState("");
+  const [budgetMode, setBudgetMode] = useState<"increase" | "set-total">("increase");
+  const [budgetError, setBudgetError] = useState("");
+  const [savingBudget, setSavingBudget] = useState(false);
   const [expenseName, setExpenseName] = useState("");
   const [expenseAmount, setExpenseAmount] = useState("");
   const [expenseDate, setExpenseDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -448,6 +570,24 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
+    if (adminToken) {
+      sessionStorage.setItem("hearthy-admin-token", adminToken);
+      setAdminLoadError("");
+      apiFetch<AdminOverview>("/admin/overview", {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      }).then(setAdminOverview).catch((error: unknown) => {
+        setAdminToken(null);
+        setAdminOverview(null);
+        sessionStorage.removeItem("hearthy-admin-token");
+        setAdminLoadError(error instanceof Error ? error.message : "Unable to load admin overview.");
+      });
+    } else {
+      sessionStorage.removeItem("hearthy-admin-token");
+      setAdminOverview(null);
+    }
+  }, [adminToken]);
+
+  useEffect(() => {
     if (!user) {
       return;
     }
@@ -465,9 +605,17 @@ export default function App() {
           setUserTransactions(expensesResponse.expenses.map(mapExpenseToTransaction));
           setIsDemoAccount(false);
           setIsAuthenticated(true);
+        } else {
+          setUserTransactions([]);
+          setIsDemoAccount(false);
+          setShowSetup(true);
+          setIsAuthenticated(true);
         }
-      } catch {
+      } catch (error) {
+        console.error("Unable to load the signed-in account.", error);
         setIsAuthenticated(true);
+      } finally {
+        setLoadingAccount(false);
       }
     };
 
@@ -530,7 +678,17 @@ export default function App() {
   });
 
   function openBudget() {
+    setBudgetMode("increase");
+    setBudgetInput("");
+    setBudgetError("");
+    setModalMode("budget");
+    setShowModal(true);
+  }
+
+  function openSetBudget() {
+    setBudgetMode("set-total");
     setBudgetInput(budget > 0 ? String(budget) : "");
+    setBudgetError("");
     setModalMode("budget");
     setShowModal(true);
   }
@@ -597,12 +755,20 @@ export default function App() {
     setShowModal(true);
   }
 
-  async function handleAuthSubmit(payload: { name?: string; email: string; password: string }) {
+  async function handleAuthSubmit(payload: { name?: string; email: string; username?: string; password: string }) {
     setLoadingAuth(true);
     setAuthError("");
 
     try {
-      if (authMode === "signup") {
+      if (authMode === "admin") {
+        const result = await apiFetch<{ token: string }>("/admin/login", {
+          method: "POST",
+          body: JSON.stringify({ username: payload.username, password: payload.password }),
+        });
+        setAdminToken(result.token);
+        setUser(null);
+        setIsAuthenticated(false);
+      } else if (authMode === "signup") {
         const result = await apiFetch<{ user: User }>('/auth/signup', {
           method: 'POST',
           body: JSON.stringify({
@@ -622,6 +788,7 @@ export default function App() {
             password: payload.password,
           }),
         });
+        setLoadingAccount(true);
         setUser(result.user);
         setIsAuthenticated(true);
         setShowSetup(false);
@@ -663,16 +830,35 @@ export default function App() {
 
   async function saveBudget(nextBudget: number) {
     if (!tracker.id) {
-      setBudget(nextBudget);
-      return;
+      throw new Error("Your tracker is still loading. Please try again.");
     }
-
     await apiFetch<{ tracker: TrackerConfig }>(`/trackers/${tracker.id}/budget`, {
       method: 'PUT',
-      body: JSON.stringify({ budget: nextBudget }),
+      body: JSON.stringify({ budget: nextBudget, currency: tracker.currency }),
     });
     setBudget(nextBudget);
     setTracker((current) => ({ ...current, budget: nextBudget }));
+  }
+
+  async function handleBudgetSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const enteredAmount = Number(budgetInput);
+    if (!Number.isFinite(enteredAmount) || enteredAmount <= 0) {
+      setBudgetError("Enter an amount greater than zero.");
+      return;
+    }
+
+    const nextBudget = budgetMode === "increase" ? budget + enteredAmount : enteredAmount;
+    setSavingBudget(true);
+    setBudgetError("");
+    try {
+      await saveBudget(nextBudget);
+      setShowModal(false);
+    } catch (error) {
+      setBudgetError(error instanceof Error ? error.message : "Unable to update the budget.");
+    } finally {
+      setSavingBudget(false);
+    }
   }
 
   async function saveExpense() {
@@ -729,12 +915,24 @@ export default function App() {
     }
   }
 
+  if (adminToken && adminOverview) {
+    return <AdminDashboard data={adminOverview} onSignOut={() => setAdminToken(null)} />;
+  }
+
+  if (adminToken) {
+    return <main className="account-loading" role="status">{adminLoadError || "Loading administrator overview…"}</main>;
+  }
+
+  if (loadingAccount) {
+    return <main className="account-loading" role="status">Loading your Hearthy account…</main>;
+  }
+
   if (showSetup) {
     return <TrackerSetup onBack={() => { setShowSetup(false); setAuthMode("login"); setIsAuthenticated(false); setUser(null); }} onComplete={handleSetupComplete} />;
   }
 
   if (!isAuthenticated || !user) {
-    return <AuthPage mode={authMode} setMode={setAuthMode} onSubmit={handleAuthSubmit} loading={loadingAuth} error={authError} />;
+    return <AuthPage mode={authMode} setMode={setAuthMode} onSubmit={handleAuthSubmit} loading={loadingAuth} error={authError || adminLoadError} />;
   }
 
   return (
@@ -851,7 +1049,7 @@ export default function App() {
 
             <article className="stat-card">
               <div className="stat-icon income"><Icon name="arrowDown" /></div>
-              <div className="stat-copy"><span>Budget</span><strong>{formatMoney(budget, tracker.currency)}</strong><small><button type="button" className="inline-action" onClick={openBudget}>{budget === 0 ? "Add your first budget" : "Edit budget"}</button></small></div>
+              <div className="stat-copy"><span>Budget</span><strong>{formatMoney(budget, tracker.currency)}</strong><small><button type="button" className="inline-action" onClick={openBudget}>{budget === 0 ? "Add your first budget" : "Add more budget"}</button>{budget > 0 && <> · <button type="button" className="inline-action" onClick={openSetBudget}>Set total</button></>}</small></div>
             </article>
 
             <article className="stat-card">
@@ -965,19 +1163,22 @@ export default function App() {
             {modalMode === "budget" ? (
               <>
                 <p className="eyebrow">Start from zero</p>
-                <h2 id="modal-title">{budget === 0 ? "Add your budget" : "Update your budget"}</h2>
-                <p>Choose the amount you want to work with. Nothing is pre-filled for new accounts.</p>
-                <form className="modal-form" onSubmit={async (event) => {
-                  event.preventDefault();
-                  const nextBudget = Number(budgetInput);
-                  if (Number.isFinite(nextBudget) && nextBudget >= 0) {
-                    await saveBudget(nextBudget);
-                    setShowModal(false);
-                  }
-                }}>
-                  <label>Budget amount<input required min="0.01" step="0.01" autoFocus type="number" value={budgetInput} onChange={(event) => setBudgetInput(event.target.value)} placeholder={formatMoney(0, tracker.currency)} /></label>
+                <h2 id="modal-title">{budgetMode === "increase" ? "Add to your budget" : "Set your budget"}</h2>
+                <p>{budgetMode === "increase" ? `Current budget: ${formatMoney(budget, tracker.currency)}. Enter the extra amount to add.` : "Set the total amount for this budget."}</p>
+                <form className="modal-form" onSubmit={handleBudgetSubmit}>
+                  {budget > 0 && (
+                    <div className="budget-mode-switch" aria-label="Budget update mode">
+                      <button type="button" className={budgetMode === "increase" ? "selected" : ""} onClick={() => { setBudgetMode("increase"); setBudgetInput(""); }}>Add amount</button>
+                      <button type="button" className={budgetMode === "set-total" ? "selected" : ""} onClick={() => { setBudgetMode("set-total"); setBudgetInput(String(budget)); }}>Set total</button>
+                    </div>
+                  )}
+                  <label>{budgetMode === "increase" ? "Additional budget" : "Total budget"}<input required min="0.01" step="0.01" autoFocus type="number" value={budgetInput} onChange={(event) => setBudgetInput(event.target.value)} placeholder={formatMoney(0, tracker.currency)} /></label>
+                  {budgetMode === "increase" && budgetInput && Number(budgetInput) > 0 && (
+                    <p className="budget-preview">New budget total: <strong>{formatMoney(budget + Number(budgetInput), tracker.currency)}</strong></p>
+                  )}
                   <label>Budget currency<select value={tracker.currency} onChange={(event) => setTracker({ ...tracker, currency: event.target.value })}>{currencies.map((item) => <option value={item.code} key={item.code}>{item.code} · {item.name}</option>)}</select></label>
-                  <button className="primary-button modal-submit" type="submit">Save budget</button>
+                  {budgetError && <p className="form-error" role="alert">{budgetError}</p>}
+                  <button className="primary-button modal-submit" type="submit" disabled={savingBudget}>{savingBudget ? "Saving..." : budgetMode === "increase" ? "Add to budget" : "Save total budget"}</button>
                 </form>
               </>
             ) : (

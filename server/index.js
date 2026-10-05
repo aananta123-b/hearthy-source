@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import fs from 'node:fs';
@@ -6,8 +7,56 @@ import crypto from 'node:crypto';
 
 const app = express();
 const port = Number(process.env.PORT || 3001);
-const dataDir = path.resolve(process.cwd(), 'server/data');
+const dataDir = process.env.HEARTHY_DATA_DIR
+  ? path.resolve(process.env.HEARTHY_DATA_DIR)
+  : path.resolve(process.cwd(), 'server/data');
 const dataFile = path.join(dataDir, 'store.json');
+const adminSessionSecret = process.env.ADMIN_SESSION_SECRET;
+
+function createAdminToken() {
+  const payload = Buffer.from(JSON.stringify({
+    role: 'admin',
+    expiresAt: Date.now() + 8 * 60 * 60 * 1000,
+  })).toString('base64url');
+  const signature = crypto.createHmac('sha256', adminSessionSecret).update(payload).digest('base64url');
+  return `${payload}.${signature}`;
+}
+
+function requireAdmin(req, res, next) {
+  const token = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+
+  if (!token || !adminSessionSecret) {
+    return res.status(401).json({ error: 'Admin authentication required.' });
+  }
+
+  const [payload, signature] = token.split('.');
+  if (!payload || !signature) {
+    return res.status(401).json({ error: 'Invalid admin session.' });
+  }
+
+  const expectedSignature = crypto.createHmac('sha256', adminSessionSecret).update(payload).digest();
+  let receivedSignature;
+  try {
+    receivedSignature = Buffer.from(signature, 'base64url');
+  } catch {
+    return res.status(401).json({ error: 'Invalid admin session.' });
+  }
+
+  if (receivedSignature.length !== expectedSignature.length || !crypto.timingSafeEqual(receivedSignature, expectedSignature)) {
+    return res.status(401).json({ error: 'Invalid admin session.' });
+  }
+
+  try {
+    const session = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'));
+    if (session.role !== 'admin' || session.expiresAt <= Date.now()) {
+      return res.status(401).json({ error: 'Admin session expired.' });
+    }
+  } catch {
+    return res.status(401).json({ error: 'Invalid admin session.' });
+  }
+
+  return next();
+}
 
 function ensureStore() {
   fs.mkdirSync(dataDir, { recursive: true });
@@ -128,6 +177,83 @@ app.post('/api/auth/login', (req, res) => {
   return res.json({ user: sanitizeUser(user) });
 });
 
+app.post('/api/admin/login', (req, res) => {
+  const username = String(req.body?.username || '');
+  const password = String(req.body?.password || '');
+  const configuredUsername = process.env.ADMIN_USERNAME;
+  const configuredPassword = process.env.ADMIN_PASSWORD;
+
+  if (!configuredUsername || !configuredPassword || !adminSessionSecret) {
+    return res.status(503).json({ error: 'Admin access is not configured on this server.' });
+  }
+
+  const usernameMatches = username === configuredUsername;
+  const passwordMatches = password === configuredPassword;
+  if (!usernameMatches || !passwordMatches) {
+    return res.status(401).json({ error: 'Incorrect admin username or password.' });
+  }
+
+  return res.json({ token: createAdminToken() });
+});
+
+app.get('/api/admin/overview', requireAdmin, (_req, res) => {
+  const store = readStore();
+  const trackersByUser = new Map();
+  const expensesByTracker = new Map();
+  const currencyTotals = new Map();
+
+  for (const expense of store.expenses) {
+    const list = expensesByTracker.get(expense.trackerId) || [];
+    list.push(expense);
+    expensesByTracker.set(expense.trackerId, list);
+    const currency = String(expense.currency || 'USD').toUpperCase();
+    currencyTotals.set(currency, (currencyTotals.get(currency) || 0) + Number(expense.amount || 0));
+  }
+
+  for (const tracker of store.trackers) {
+    const list = trackersByUser.get(tracker.userId) || [];
+    const expenses = expensesByTracker.get(tracker.id) || [];
+    list.push({
+      id: tracker.id,
+      name: tracker.name,
+      currency: tracker.currency,
+      budget: Number(tracker.budget) || 0,
+      expenseCount: expenses.length,
+      totalExpense: expenses.reduce((total, expense) => total + Number(expense.amount || 0), 0),
+    });
+    trackersByUser.set(tracker.userId, list);
+  }
+
+  const users = store.users.map((user) => ({
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    createdAt: user.createdAt,
+    trackers: trackersByUser.get(user.id) || [],
+  }));
+
+  return res.json({
+    totalUsers: users.length,
+    totalTrackers: store.trackers.length,
+    totalExpenses: store.expenses.length,
+    amountByCurrency: Object.fromEntries(currencyTotals),
+    users,
+    recentExpenses: store.expenses
+      .slice()
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, 25)
+      .map((expense) => ({
+        id: expense.id,
+        trackerId: expense.trackerId,
+        name: expense.name,
+        amount: Number(expense.amount) || 0,
+        currency: expense.currency,
+        category: expense.category,
+        date: expense.date,
+      })),
+  });
+});
+
 app.get('/api/users/:userId/trackers', (req, res) => {
   const { userId } = req.params;
   const store = readStore();
@@ -184,11 +310,14 @@ app.get('/api/trackers/:trackerId', (req, res) => {
 
 app.put('/api/trackers/:trackerId/budget', (req, res) => {
   const { trackerId } = req.params;
-  const { budget } = req.body || {};
+  const { budget, currency } = req.body || {};
   const parsedBudget = Number(budget);
 
   if (!Number.isFinite(parsedBudget) || parsedBudget < 0) {
     return res.status(400).json({ error: 'A valid budget is required.' });
+  }
+  if (currency !== undefined && !/^[A-Z]{3}$/.test(String(currency).toUpperCase())) {
+    return res.status(400).json({ error: 'A valid three-letter currency code is required.' });
   }
 
   const store = readStore();
@@ -199,6 +328,7 @@ app.put('/api/trackers/:trackerId/budget', (req, res) => {
   }
 
   tracker.budget = parsedBudget;
+  if (currency !== undefined) tracker.currency = String(currency).toUpperCase();
   writeStore(store);
 
   return res.json({ tracker: mapTracker(tracker) });
@@ -302,6 +432,6 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: 'Something went wrong on the server.' });
 });
 
-app.listen(port, () => {
+app.listen(port, '127.0.0.1', () => {
   console.log(`Hearthy API running on http://localhost:${port}`);
 });
